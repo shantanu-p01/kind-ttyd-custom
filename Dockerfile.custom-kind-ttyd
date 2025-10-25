@@ -37,3 +37,6 @@ RUN mkdir -p /etc/systemd/system/ && \
     echo '[Install]' >> /etc/systemd/system/ttyd.service && \
     echo 'WantedBy=multi-user.target' >> /etc/systemd/system/ttyd.service && \
     ln -s /etc/systemd/system/ttyd.service /etc/systemd/system/multi-user.target.wants/ttyd.service
+
+# Set KUBECONFIG environment variable for kubectl access in ttyd terminal
+RUN echo 'export KUBECONFIG=/etc/kubernetes/admin.conf' >> /root/.bashrc
