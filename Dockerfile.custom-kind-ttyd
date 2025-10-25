@@ -1,0 +1,39 @@
+# Use the official KinD node image as base
+FROM kindest/node:v1.34.0
+
+# Install dependencies and ttyd
+RUN apt-get update && \
+    apt-get install -y \
+    wget \
+    curl \
+    vim \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install ttyd
+RUN wget https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -O /usr/local/bin/ttyd && \
+    chmod +x /usr/local/bin/ttyd
+
+# Create a password file for ttyd authentication
+# Default password is "kind123" (you can change this)
+RUN echo "kind:$(openssl passwd -apr1 kind123)" > /etc/ttyd.passwd
+
+# Create a startup script for ttyd
+RUN echo '#!/bin/bash' > /usr/local/bin/start-ttyd.sh && \
+    echo 'ttyd -p 55555 -c kind:kind123 -t fontSize=16 -t theme={"background":"#1e1e1e"} -W bash &' >> /usr/local/bin/start-ttyd.sh && \
+    chmod +x /usr/local/bin/start-ttyd.sh
+
+# Create a systemd service to start ttyd after system boots
+RUN mkdir -p /etc/systemd/system/ && \
+    echo '[Unit]' > /etc/systemd/system/ttyd.service && \
+    echo 'Description=ttyd - web terminal' >> /etc/systemd/system/ttyd.service && \
+    echo 'After=multi-user.target' >> /etc/systemd/system/ttyd.service && \
+    echo '' >> /etc/systemd/system/ttyd.service && \
+    echo '[Service]' >> /etc/systemd/system/ttyd.service && \
+    echo 'Type=simple' >> /etc/systemd/system/ttyd.service && \
+    echo 'ExecStart=/usr/local/bin/ttyd -p 55555 -c kind:kind123 -t fontSize=16 -W bash' >> /etc/systemd/system/ttyd.service && \
+    echo 'Restart=always' >> /etc/systemd/system/ttyd.service && \
+    echo '' >> /etc/systemd/system/ttyd.service && \
+    echo '[Install]' >> /etc/systemd/system/ttyd.service && \
+    echo 'WantedBy=multi-user.target' >> /etc/systemd/system/ttyd.service && \
+    ln -s /etc/systemd/system/ttyd.service /etc/systemd/system/multi-user.target.wants/ttyd.service
