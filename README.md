@@ -2,6 +2,8 @@
 
 This directory contains files to create a custom KinD (Kubernetes in Docker) cluster with ttyd (terminal over HTTP) pre-installed.
 
+**Docker Image:** https://hub.docker.com/r/shantanupatil01/custom-kind-ttyd
+
 ## Files
 
 - **Dockerfile.custom-kind-ttyd**: Dockerfile to build custom KinD image with ttyd
@@ -17,6 +19,27 @@ This directory contains files to create a custom KinD (Kubernetes in Docker) clu
 - ✅ Web-based terminal access
 
 ## Quick Start
+
+### Option 1: Use Pre-built Image
+
+1. **Pull the image:**
+   ```bash
+   docker pull shantanupatil01/custom-kind-ttyd:1.34.0
+   ```
+
+2. **Create the KinD cluster:**
+   ```bash
+   kind create cluster --config kind-cluster-with-ttyd.yml
+   ```
+   
+   Note: The `kind-cluster-with-ttyd.yml` file already references the Docker Hub image
+
+3. **Access ttyd:**
+   - Open browser: http://localhost:55555
+   - Username: `kind`
+   - Password: `kind123`
+
+### Option 2: Build from Source
 
 1. **Build the custom image:**
    ```bash
