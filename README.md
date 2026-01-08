@@ -24,7 +24,7 @@ This directory contains files to create a custom KinD (Kubernetes in Docker) clu
 
 1. **Pull the image:**
    ```bash
-   docker pull shantanupatil01/custom-kind-ttyd:1.34.0
+   docker pull shantanupatil01/custom-kind-ttyd:1.35.0
    ```
 
 2. **Create the KinD cluster:**

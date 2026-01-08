@@ -1,5 +1,5 @@
 # Use the official KinD node image as base
-FROM kindest/node:v1.34.0
+FROM kindest/node:v1.35.0
 
 # Install dependencies and ttyd
 RUN apt-get update && \

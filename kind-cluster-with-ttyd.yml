@@ -4,7 +4,7 @@ name: kind-cluster-ttyd
 
 nodes:
   - role: control-plane
-    image: shantanupatil01/custom-kind-ttyd:1.34.0
+    image: shantanupatil01/custom-kind-ttyd:1.35.0
     extraPortMappings:
       # ttyd port mapping
       - containerPort: 55555
@@ -54,7 +54,7 @@ nodes:
         protocol: tcp
 
   - role: worker
-    image: shantanupatil01/custom-kind-ttyd:1.34.0
+    image: shantanupatil01/custom-kind-ttyd:1.35.0
     extraPortMappings:
       # NodePort range mappings
       - containerPort: 30011
@@ -79,7 +79,7 @@ nodes:
         protocol: tcp
 
   - role: worker
-    image: shantanupatil01/custom-kind-ttyd:1.34.0
+    image: shantanupatil01/custom-kind-ttyd:1.35.0
     extraPortMappings:
       # NodePort range mappings
       - containerPort: 30021
