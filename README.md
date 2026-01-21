@@ -1,49 +1,57 @@
-# Custom KinD Image with ttyd
+# Custom KinD Image with ttyd and SSH
 
-This directory contains files to create a custom KinD (Kubernetes in Docker) cluster with ttyd (terminal over HTTP) pre-installed.
+This directory contains files to create a custom KinD (Kubernetes in Docker) cluster with ttyd (terminal over HTTP) and passwordless SSH between nodes.
 
 **Docker Image:** https://hub.docker.com/r/shantanupatil01/custom-kind-ttyd
 
 ## Files
 
-- **Dockerfile.custom-kind-ttyd**: Dockerfile to build custom KinD image with ttyd
+- **Dockerfile.custom-kind-ttyd**: Dockerfile to build custom KinD image with ttyd and SSH
 - **kind-cluster-with-ttyd.yml**: KinD cluster configuration with ttyd port mapping
-- **setup-kind-with-ttyd.sh**: Automated setup script
 
 ## Features
 
 - ✅ KinD multi-node cluster (1 control-plane + 2 workers)
-- ✅ ttyd installed and running on port **55555**
+- ✅ ttyd installed and running on port **55555** (control-plane only)
+- ✅ **Passwordless SSH** between all nodes (control-plane ↔ workers)
+- ✅ **Automatic node discovery** (updates /etc/hosts every 500ms)
+- ✅ **Clean hostname prompts** (control-plane, worker01, worker02)
+- ✅ **Custom Kubernetes node names** (control-plane, worker01, worker02)
+- ✅ **kubectl alias `k`** with bash autocomplete (control-plane only)
 - ✅ Password authentication enabled
-- ✅ NodePort mappings (30001-30010) for Kubernetes services
+- ✅ NodePort mappings (30001-30025) for Kubernetes services
 - ✅ Web-based terminal access
+- ✅ HOME directory properly set to /root
 
 ## Quick Start
 
 ### Option 1: Use Pre-built Image
 
-1. **Pull the image:**
-   ```bash
-   docker pull shantanupatil01/custom-kind-ttyd:1.35.0
-   ```
-
-2. **Create the KinD cluster:**
+1. **Create the KinD cluster:**
    ```bash
    kind create cluster --config kind-cluster-with-ttyd.yml
    ```
    
-   Note: The `kind-cluster-with-ttyd.yml` file already references the Docker Hub image
+   Note: The config automatically pulls `shantanupatil01/custom-kind-ttyd:1.35.0` from your local build
 
-3. **Access ttyd:**
+2. **Access control-plane via ttyd:**
    - Open browser: http://localhost:55555
    - Username: `kind`
    - Password: `kind123`
 
+3. **SSH between nodes (from control-plane):**
+   ```bash
+   ssh worker01    # SSH to first worker
+   ssh worker02    # SSH to second worker
+   ssh control-plane  # SSH back to control-plane
+   ```
+   No password required - uses pre-generated SSH keys!
+
 ### Option 2: Build from Source
 
-1. **Build the custom image:**
+1. **Build the custom image locally:**
    ```bash
-   docker build -t custom-kind-ttyd:latest -f Dockerfile.custom-kind-ttyd .
+   docker buildx build --platform linux/amd64 -t shantanupatil01/custom-kind-ttyd:1.35.0 -f Dockerfile.custom-kind-ttyd --load .
    ```
 
 2. **Create the KinD cluster:**
@@ -51,38 +59,82 @@ This directory contains files to create a custom KinD (Kubernetes in Docker) clu
    kind create cluster --config kind-cluster-with-ttyd.yml
    ```
 
-3. **Access ttyd:**
-   - Open browser: http://localhost:55555
-   - Username: `kind`
-   - Password: `kind123`
+3. **Access via ttyd and SSH as above**
+
+## SSH Configuration
+
+### Automatic Node Discovery
+
+The image includes a systemd service that:
+- Runs every **500ms** to discover cluster nodes
+- Automatically updates `/etc/hosts` with short names:
+  - `control-plane` → control-plane node
+  - `worker01` → first worker
+  - `worker02` → second worker
+- Starts SSH server automatically on all nodes
+
+### Passwordless SSH
+
+All nodes have:
+- Pre-generated SSH keypair embedded in the image
+- Public key added to `authorized_keys`
+- No password required for inter-node SSH
+
+### Clean Shell Prompts
+
+Terminals show color-coded short hostnames:
+```bash
+control-plane:~$
+worker01:~$
+worker02:~$
+```
 
 ## Configuration
 
-### Changing the Password
+### Changing the ttyd Password
 
 Edit `Dockerfile.custom-kind-ttyd` and modify this line:
 ```dockerfile
 RUN echo "kind:$(openssl passwd -apr1 YOUR_NEW_PASSWORD)" > /etc/ttyd.passwd
 ```
 
-And update the ttyd command line:
+And update the ttyd systemd service:
 ```dockerfile
-echo 'ttyd -p 55555 -c kind:YOUR_NEW_PASSWORD -t fontSize=16 bash > /var/log/ttyd.log 2>&1 &' >> /usr/local/bin/entrypoint-with-ttyd.sh && \
+echo 'ExecStart=/usr/local/bin/ttyd -p 55555 -c kind:YOUR_NEW_PASSWORD -t fontSize=16 -W bash' >> /etc/systemd/system/ttyd.service
 ```
 
 Then rebuild the image.
 
-### Changing the Port
+### Changing Discovery Interval
 
-To change ttyd port from 55555 to another port:
+To change node discovery interval from 500ms:
 
-1. Edit `Dockerfile.custom-kind-ttyd` - change `-p 55555` to your desired port
-2. Edit `kind-cluster-with-ttyd.yml` - change containerPort and hostPort to match
+Edit the systemd service in `Dockerfile.custom-kind-ttyd`:
+```dockerfile
+echo 'ExecStart=/bin/bash -c "while true; do /usr/local/bin/kind-node-discovery.sh; sleep 0.5; done"' 
+# Change 0.5 to your desired interval in seconds
+```
+
+### Adding More Workers
+
+Edit `kind-cluster-with-ttyd.yml` and add more worker nodes:
+```yaml
+  - role: worker
+    image: shantanupatil01/custom-kind-ttyd:1.35.0
+    extraPortMappings:
+      - containerPort: 30031
+        hostPort: 30031
+        listenAddress: "0.0.0.0"
+        protocol: tcp
+```
+
+The discovery service will automatically detect up to 5 workers (worker01-worker05).
 
 ## Default Credentials
 
-- **Username:** kind
-- **Password:** kind123
+- **ttyd Username:** kind
+- **ttyd Password:** kind123
+- **SSH:** Passwordless (key-based authentication)
 
 ⚠️ **Important:** Change the default password for production use!
 
@@ -98,49 +150,103 @@ kind delete cluster --name kind-cluster-ttyd
 # Get cluster info
 kubectl cluster-info --context kind-kind-cluster-ttyd
 
-# List all nodes
+# List all nodes (shows custom names: control-plane, worker01, worker02)
 kubectl get nodes
+# or use the alias from control-plane:
+k get nodes
 
-# Access a specific node
+# Access control-plane directly
 docker exec -it kind-cluster-ttyd-control-plane bash
+
+# Check node discovery service status
+docker exec kind-cluster-ttyd-control-plane systemctl status kind-node-discovery.service
+
+# View /etc/hosts entries on control-plane
+docker exec kind-cluster-ttyd-control-plane cat /etc/hosts
 ```
 
 ## Port Mappings
 
 | Service | Container Port | Host Port | Description |
 |---------|---------------|-----------|-------------|
-| ttyd | 55555 | 55555 | Web terminal |
-| NodePort | 30001-30010 | 30001-30010 | Kubernetes services |
+| ttyd (control-plane) | 55555 | 55555 | Web terminal |
+| NodePort (control-plane) | 30001-30010 | 30001-30010 | Kubernetes services |
+| NodePort (worker-1) | 30011-30015 | 30011-30015 | Kubernetes services |
+| NodePort (worker-2) | 30021-30025 | 30021-30025 | Kubernetes services |
+
+**Note:** SSH ports (22) are NOT exposed on the host - only accessible between containers internally.
 
 ## Troubleshooting
 
 ### ttyd not accessible
 
-Check if ttyd is running inside the container:
+Check if ttyd is running inside the control-plane:
 ```bash
-docker exec -it kind-cluster-ttyd-control-plane ps aux | grep ttyd
+docker exec kind-cluster-ttyd-control-plane systemctl status ttyd.service
 ```
 
-Check ttyd logs:
+### SSH not working between nodes
+
+Check if sshd is running:
 ```bash
-docker exec -it kind-cluster-ttyd-control-plane cat /var/log/ttyd.log
+docker exec kind-cluster-ttyd-control-plane pgrep sshd
+docker exec kind-cluster-ttyd-worker pgrep sshd
 ```
 
-### Rebuild image after changes
-
+Check node discovery:
 ```bash
-# Delete existing cluster
+docker exec kind-cluster-ttyd-control-plane cat /etc/hosts | grep kind-ssh-shortcuts
+```
+
+Manually restart discovery service:
+```bash
+docker exec kind-cluster-ttyd-control-plane systemctl restart kind-node-discovery.service
+```
+
+### HOME not set error
+
+This should be fixed in the latest image. If you see this error, rebuild:
+```bash
+docker buildx build --platform linux/amd64 -t shantanupatil01/custom-kind-ttyd:1.35.0 -f Dockerfile.custom-kind-ttyd --load .
 kind delete cluster --name kind-cluster-ttyd
-
-# Rebuild image
-docker build -t custom-kind-ttyd:latest -f Dockerfile.custom-kind-ttyd .
-
-# Create cluster again
 kind create cluster --config kind-cluster-with-ttyd.yml
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────┐
+│     Host Machine (localhost:55555)      │
+└────────────────┬────────────────────────┘
+                 │ ttyd web access
+                 ▼
+    ┌────────────────────────────┐
+    │   control-plane            │
+    │   - ttyd:55555             │◄──SSH──┐
+    │   - sshd:22                │        │
+    │   - node-discovery service │        │
+    └────────────┬───────────────┘        │
+                 │                        │
+       ┌─────────┴──────────┐             │
+       │  Passwordless SSH  │             │
+       ▼                    ▼             │
+┌──────────────┐    ┌──────────────┐      │
+│  worker01    │    │  worker02    │      │
+│  - sshd:22   │◄───┤  - sshd:22   │──────┘
+│  - discovery │    │  - discovery │
+└──────────────┘    └──────────────┘
 ```
 
 ## Notes
 
-- The ttyd service runs on all nodes (control-plane and workers)
-- Only the control-plane node's ttyd is exposed on port 55555
-- You can exec into worker nodes using `docker exec -it <container-name> bash`
+- The ttyd service runs only on the control-plane node
+- SSH is enabled on all nodes with passwordless authentication
+- Node discovery runs on all nodes and updates /etc/hosts automatically
+- All nodes share the same SSH keypair (embedded in the image at build time)
+- Default working directory is `/root` for all nodes
+- KUBECONFIG is pre-configured for kubectl access
+
+## Contact
+
+For questions, issues, or suggestions:
+- **Email:** shantanu.verulkar.01@gmail.com

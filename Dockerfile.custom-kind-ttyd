@@ -1,13 +1,18 @@
 # Use the official KinD node image as base
 FROM kindest/node:v1.35.0
 
-# Install dependencies and ttyd
+# Install dependencies, OpenSSH and ttyd
 RUN apt-get update && \
     apt-get install -y \
     wget \
     curl \
     vim \
     net-tools \
+    netcat-openbsd \
+    openssh-server \
+    openssh-client \
+    openssl \
+    bash-completion \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install ttyd
@@ -22,6 +27,15 @@ RUN echo "kind:$(openssl passwd -apr1 kind123)" > /etc/ttyd.passwd
 RUN echo '#!/bin/bash' > /usr/local/bin/start-ttyd.sh && \
     echo 'ttyd -p 55555 -c kind:kind123 -t fontSize=16 -t theme={"background":"#1e1e1e"} -W bash &' >> /usr/local/bin/start-ttyd.sh && \
     chmod +x /usr/local/bin/start-ttyd.sh
+
+# Configure and enable SSH
+RUN mkdir -p /var/run/sshd && \
+    echo 'root:kind123' | chpasswd && \
+    sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config || true && \
+    sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config || true && \
+    grep -q "PermitRootLogin yes" /etc/ssh/sshd_config || echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
+    grep -q "PasswordAuthentication yes" /etc/ssh/sshd_config || echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
+    if [ -f /lib/systemd/system/ssh.service ]; then ln -s /lib/systemd/system/ssh.service /etc/systemd/system/multi-user.target.wants/ssh.service || true; fi
 
 # Create a systemd service to start ttyd after system boots
 RUN mkdir -p /etc/systemd/system/ && \
@@ -40,3 +54,102 @@ RUN mkdir -p /etc/systemd/system/ && \
 
 # Set KUBECONFIG environment variable for kubectl access in ttyd terminal
 RUN echo 'export KUBECONFIG=/etc/kubernetes/admin.conf' >> /root/.bashrc
+
+# Generate SSH keypair for passwordless inter-node SSH and enable authorized_keys
+RUN mkdir -p /root/.ssh && \
+    ssh-keygen -t rsa -b 2048 -f /root/.ssh/id_rsa -N '' -q && \
+    cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys && \
+    chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && chmod 600 /root/.ssh/id_rsa && chmod 644 /root/.ssh/id_rsa.pub
+
+# Set HOME environment variable properly
+ENV HOME=/root
+
+# Create node discovery script that finds other kind nodes and updates /etc/hosts
+RUN cat > /usr/local/bin/kind-node-discovery.sh <<'DISCOVERY_EOF'
+#!/bin/bash
+set -e
+
+# Start sshd if not running
+mkdir -p /var/run/sshd
+pgrep -x sshd >/dev/null 2>&1 || /usr/sbin/sshd
+
+# Extract cluster name from hostname
+CLUSTER_PREFIX=$(hostname | sed 's/-control-plane$//;s/-worker[0-9]*$//')
+
+# Discover and map nodes
+TEMP_HOSTS=/tmp/kind-hosts-$$
+> "$TEMP_HOSTS"
+
+# Try control-plane
+if IP=$(getent hosts ${CLUSTER_PREFIX}-control-plane 2>/dev/null | awk '{print $1}' | head -n1); then
+  [ -n "$IP" ] && echo "$IP control-plane" >> "$TEMP_HOSTS"
+fi
+
+# Try workers
+for i in "" 2 3 4 5; do
+  NODE_NAME="${CLUSTER_PREFIX}-worker${i}"
+  if [[ -z "$i" ]]; then
+    SHORT_NAME="worker01"
+  else
+    SHORT_NAME=$(printf "worker%02d" $i)
+  fi
+  if IP=$(getent hosts $NODE_NAME 2>/dev/null | awk '{print $1}' | head -n1); then
+    [ -n "$IP" ] && echo "$IP $SHORT_NAME" >> "$TEMP_HOSTS"
+  fi
+done
+
+# Update /etc/hosts if we found nodes
+if [ -s "$TEMP_HOSTS" ]; then
+  sed -i "/# kind-ssh-shortcuts/d" /etc/hosts 2>/dev/null || true
+  while IFS= read -r line; do
+    echo "$line # kind-ssh-shortcuts" >> /etc/hosts
+  done < "$TEMP_HOSTS"
+fi
+
+rm -f "$TEMP_HOSTS"
+DISCOVERY_EOF
+
+RUN chmod +x /usr/local/bin/kind-node-discovery.sh
+
+# Create systemd service for node discovery (runs every 500ms)
+RUN echo '[Unit]' > /etc/systemd/system/kind-node-discovery.service && \
+    echo 'Description=Kind Node Discovery Service' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo 'After=network.target' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo '' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo '[Service]' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo 'Type=simple' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo 'ExecStart=/bin/bash -c "while true; do /usr/local/bin/kind-node-discovery.sh; sleep 0.5; done"' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo 'Restart=always' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo 'RestartSec=5' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo '' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo '[Install]' >> /etc/systemd/system/kind-node-discovery.service && \
+    echo 'WantedBy=multi-user.target' >> /etc/systemd/system/kind-node-discovery.service && \
+    ln -s /etc/systemd/system/kind-node-discovery.service /etc/systemd/system/multi-user.target.wants/kind-node-discovery.service
+
+# Improve interactive shell: show colored short hostname prompt (no username)
+RUN echo '' >> /root/.bashrc && \
+    echo '# -- kind customizations: colored prompt with short hostname' >> /root/.bashrc && \
+    echo 'export HOME=/root' >> /root/.bashrc && \
+    echo 'cd ~' >> /root/.bashrc && \
+    echo '# Load bash-completion' >> /root/.bashrc && \
+    echo '[ -f /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion' >> /root/.bashrc && \
+    echo 'if [ -n "$PS1" ]; then' >> /root/.bashrc && \
+    echo '  if [[ "$HOSTNAME" == *"control-plane"* ]]; then' >> /root/.bashrc && \
+    echo '    HOST_SHORT="control-plane"' >> /root/.bashrc && \
+    echo '    alias k=kubectl' >> /root/.bashrc && \
+    echo '    source <(kubectl completion bash)' >> /root/.bashrc && \
+    echo '    complete -o default -F __start_kubectl k' >> /root/.bashrc && \
+    echo '  elif [[ "$HOSTNAME" == *"worker"* ]]; then' >> /root/.bashrc && \
+    echo '    WORKER_NUM=$(echo "$HOSTNAME" | grep -oP "worker\\K[0-9]*" || echo "")' >> /root/.bashrc && \
+    echo '    if [[ -z "$WORKER_NUM" ]]; then' >> /root/.bashrc && \
+    echo '      HOST_SHORT="worker01"' >> /root/.bashrc && \
+    echo '    else' >> /root/.bashrc && \
+    echo '      HOST_SHORT=$(printf "worker%02d" $WORKER_NUM)' >> /root/.bashrc && \
+    echo '    fi' >> /root/.bashrc && \
+    echo '  else' >> /root/.bashrc && \
+    echo '    HOST_SHORT="${HOSTNAME%%.*}"' >> /root/.bashrc && \
+    echo '  fi' >> /root/.bashrc && \
+    echo '  export PS1="\\[\\033[01;32m\\]${HOST_SHORT}\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ "' >> /root/.bashrc && \
+    echo 'fi' >> /root/.bashrc
+
+WORKDIR /root

@@ -5,6 +5,13 @@ name: kind-cluster-ttyd
 nodes:
   - role: control-plane
     image: shantanupatil01/custom-kind-ttyd:1.35.0
+    kubeadmConfigPatches:
+    - |
+      kind: InitConfiguration
+      nodeRegistration:
+        kubeletExtraArgs:
+          node-labels: "ingress-ready=true"
+        name: control-plane
     extraPortMappings:
       # ttyd port mapping
       - containerPort: 55555
@@ -55,6 +62,13 @@ nodes:
 
   - role: worker
     image: shantanupatil01/custom-kind-ttyd:1.35.0
+    kubeadmConfigPatches:
+    - |
+      kind: JoinConfiguration
+      nodeRegistration:
+        name: worker01
+        kubeletExtraArgs:
+          node-labels: ""
     extraPortMappings:
       # NodePort range mappings
       - containerPort: 30011
@@ -80,6 +94,13 @@ nodes:
 
   - role: worker
     image: shantanupatil01/custom-kind-ttyd:1.35.0
+    kubeadmConfigPatches:
+    - |
+      kind: JoinConfiguration
+      nodeRegistration:
+        name: worker02
+        kubeletExtraArgs:
+          node-labels: ""
     extraPortMappings:
       # NodePort range mappings
       - containerPort: 30021
