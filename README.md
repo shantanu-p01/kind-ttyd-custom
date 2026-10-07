@@ -95,33 +95,39 @@ worker02:~$
 
 You have several ways to set or change credentials without needing to rebuild the image:
 
-#### Method 1: Automatic Prompt on First Login (Recommended)
-Upon your very first interactive login via the web terminal or SSH, an alert banner warns that default credentials (`kind` / `kind123`) are active:
+#### Method 1: Mandatory Credential Setup on First Login (Enforced)
+Upon your very first interactive login via the web terminal or SSH, credential setup is strictly enforced and cannot be bypassed:
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│ ⚠️  SECURITY ALERT: Default Password Active                     │
-│ Current credentials: username 'kind' | password 'kind123'       │
-│ It is strongly recommended to change your password now.         │
+│ ⚠️  SECURITY NOTICE: Mandatory Credential Setup                 │
+│ Default credentials (kind / kind123) are currently active.       │
+│ You must configure a new username and password to proceed.       │
 └─────────────────────────────────────────────────────────────────┘
 
-Would you like to change your password now? [y/N]:
+Enter new username [current: kind]: 
+Enter new password: 
+Confirm new password: 
 ```
-Press `y` to securely set a new password. The script updates both the web terminal and Linux root password, then automatically restarts the ttyd service.
+- You can specify a custom username or press Enter to keep `kind`.
+- You must enter and confirm a new password (`kind123` is disallowed).
+- Verification cannot be cancelled or bypassed (Ctrl+C and Ctrl+D are handled).
+- Once configured, the script updates the credentials, restarts `ttyd`, and reloads the web session.
 
-#### Method 2: Change Password Anytime via Terminal CLI
+#### Method 2: Change Credentials Anytime via Terminal CLI
 Run the built-in utility inside the container at any time:
 ```bash
+# Interactive mode (prompts for username and password)
 change-password
-```
-Or set it directly non-interactively:
-```bash
+
+# Non-interactive mode (specify username and/or password)
+change-password -u admin -p "MyNewSecretPassword"
 change-password -p "MyNewSecretPassword"
 ```
 
 #### Method 3: Change from Host via Docker CLI
-Change the password from your host machine without opening the web terminal:
+Change credentials from your host machine without opening the web terminal:
 ```bash
-docker exec kind-cluster-ttyd-control-plane change-password -p "MyNewSecretPassword"
+docker exec kind-cluster-ttyd-control-plane change-password -u admin -p "MyNewSecretPassword"
 ```
 
 #### Method 4: Build-time Arguments (If Building from Source)

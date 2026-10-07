@@ -61,44 +61,109 @@ CONFIG_FILE="/etc/default/ttyd"
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
 CURRENT_USER="${TTYD_USER:-kind}"
 NEW_PASS=""
-NEW_USER="$CURRENT_USER"
+NEW_USER=""
+FIRST_LOGIN=0
 
-while getopts "p:u:h" opt; do
+while getopts "p:u:h-:" opt; do
   case "$opt" in
     p) NEW_PASS="$OPTARG" ;;
     u) NEW_USER="$OPTARG" ;;
     h)
-      echo "Usage: change-password [-p <password>] [-u <username>]"
+      echo "Usage: change-password [-u <username>] [-p <password>]"
       exit 0
       ;;
+    -)
+      case "$OPTARG" in
+        first-login) FIRST_LOGIN=1 ;;
+        *) echo "Unknown option --$OPTARG"; exit 1 ;;
+      esac
+      ;;
     *)
-      echo "Usage: change-password [-p <password>] [-u <username>]"
+      echo "Usage: change-password [-u <username>] [-p <password>]"
       exit 1
       ;;
   esac
 done
 
-if [ -z "$NEW_PASS" ]; then
+if [ "$FIRST_LOGIN" -eq 1 ]; then
+  trap 'echo -e "\n\033[1;31m⚠️ Credential setup is mandatory and cannot be skipped or cancelled.\033[0m"' INT TSTP
+fi
+
+# Banner
+if [ "$FIRST_LOGIN" -eq 1 ]; then
   echo ""
-  echo -e "\033[1;36m🔑 Update Password (ttyd web terminal & root)\033[0m"
-  echo "Username: $NEW_USER"
+  echo -e "\033[1;33m┌─────────────────────────────────────────────────────────────────┐\033[0m"
+  echo -e "\033[1;33m│\033[0m \033[1;31m⚠️  SECURITY NOTICE: Mandatory Credential Setup                 \033[1;33m│\033[0m"
+  echo -e "\033[1;33m│\033[0m Default credentials (kind / kind123) are currently active.       \033[1;33m│\033[0m"
+  echo -e "\033[1;33m│\033[0m You must configure a new username and password to proceed.       \033[1;33m│\033[0m"
+  echo -e "\033[1;33m└─────────────────────────────────────────────────────────────────┘\033[0m"
   echo ""
+else
+  [ -z "$NEW_PASS" ] && [ -z "$NEW_USER" ] && echo -e "\n\033[1;36m🔑 Update Credentials (ttyd web terminal & root)\033[0m\n"
+fi
+
+# Prompt for username if not supplied
+if [ -z "$NEW_USER" ]; then
   while true; do
-    read -r -s -p "Enter new password: " p1
+    read -r -p "Enter new username [current: $CURRENT_USER]: " input_user || {
+      if [ "$FIRST_LOGIN" -eq 1 ]; then
+        echo -e "\n\033[1;31mSession terminated. Credential setup was not completed.\033[0m"
+        exit 1
+      fi
+      exit 0
+    }
+    input_user=$(echo "$input_user" | tr -d "[:space:]")
+    if [ -z "$input_user" ]; then
+      NEW_USER="$CURRENT_USER"
+      break
+    elif [[ "$input_user" =~ [:] ]]; then
+      echo -e "\033[1;31mUsername cannot contain colons (:). Please try again.\033[0m"
+    else
+      NEW_USER="$input_user"
+      break
+    fi
+  done
+fi
+
+# Prompt for password if not supplied
+if [ -z "$NEW_PASS" ]; then
+  while true; do
+    read -r -s -p "Enter new password: " p1 || {
+      if [ "$FIRST_LOGIN" -eq 1 ]; then
+        echo -e "\n\033[1;31mSession terminated. Credential setup was not completed.\033[0m"
+        exit 1
+      fi
+      exit 0
+    }
     echo ""
     if [ -z "$p1" ]; then
-      echo "Password cannot be empty. Please try again."
+      echo -e "\033[1;31mPassword cannot be empty. Please try again.\033[0m"
       continue
     fi
-    read -r -s -p "Confirm new password: " p2
+    if [ "$p1" = "kind123" ]; then
+      echo -e "\033[1;31mPassword cannot be the default password ('kind123'). Please enter a new password.\033[0m"
+      continue
+    fi
+    read -r -s -p "Confirm new password: " p2 || {
+      if [ "$FIRST_LOGIN" -eq 1 ]; then
+        echo -e "\n\033[1;31mSession terminated. Credential setup was not completed.\033[0m"
+        exit 1
+      fi
+      exit 0
+    }
     echo ""
     if [ "$p1" != "$p2" ]; then
-      echo "Passwords do not match. Please try again."
+      echo -e "\033[1;31mPasswords do not match. Please try again.\033[0m"
     else
       NEW_PASS="$p1"
       break
     fi
   done
+else
+  if [ "$NEW_PASS" = "kind123" ]; then
+    echo -e "\033[1;31mError: Password cannot be the default password ('kind123').\033[0m"
+    exit 1
+  fi
 fi
 
 cat > "$CONFIG_FILE" <<EOF
@@ -110,12 +175,16 @@ chmod 600 "$CONFIG_FILE"
 echo "root:$NEW_PASS" | chpasswd
 touch /root/.password_changed
 
+trap - INT TSTP
+
 echo ""
-echo -e "\033[1;32m✅ Password successfully updated for user '$NEW_USER' and system 'root'!\033[0m"
+echo -e "\033[1;32m✅ Credentials successfully updated!\033[0m"
+echo -e "   Username: \033[1;37m$NEW_USER\033[0m"
 
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ttyd 2>/dev/null; then
+  echo ""
   echo "🔄 Restarting ttyd web service..."
-  echo "⚠️  If connected via web terminal, please refresh your browser to re-login."
+  echo "⚠️  Web terminal will reload. Please log in with your new credentials."
   sleep 1
   systemctl restart ttyd 2>/dev/null || true
 fi
@@ -239,10 +308,10 @@ RUN echo '' >> /root/.bashrc && \
     echo '  export PS1="\\[\\033[01;32m\\]${HOST_SHORT}\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ "' >> /root/.bashrc && \
     echo 'fi' >> /root/.bashrc
 
-# Prompt user to change password on first interactive login
+# Enforce mandatory credential setup on first interactive login
 RUN cat >> /root/.bashrc <<'BASHRC_EOF'
 
-# First login password prompt
+# First login mandatory credential setup
 if [[ $- == *i* ]]; then
   if [ -f /etc/default/ttyd ]; then
     _curr_pw=$(grep '^TTYD_PASSWORD=' /etc/default/ttyd 2>/dev/null | cut -d'=' -f2-)
@@ -250,26 +319,8 @@ if [[ $- == *i* ]]; then
       touch /root/.password_changed 2>/dev/null || true
     fi
   fi
-  if [ ! -f /root/.password_prompt_shown ] && [ ! -f /root/.password_changed ]; then
-    touch /root/.password_prompt_shown
-    echo ""
-    echo -e "\033[1;33m┌─────────────────────────────────────────────────────────────────┐\033[0m"
-    echo -e "\033[1;33m│\033[0m \033[1;31m⚠️  SECURITY ALERT: Default Password Active                     \033[1;33m│\033[0m"
-    echo -e "\033[1;33m│\033[0m Current credentials: username '\033[1;37mkind\033[0m' | password '\033[1;37mkind123\033[0m'        \033[1;33m│\033[0m"
-    echo -e "\033[1;33m│\033[0m It is strongly recommended to change your password now.         \033[1;33m│\033[0m"
-    echo -e "\033[1;33m└─────────────────────────────────────────────────────────────────┘\033[0m"
-    echo ""
-    read -r -p "Would you like to change your password now? [y/N]: " _change_choice
-    case "$_change_choice" in
-      [yY]|[yY][eE][sS])
-        /usr/local/bin/change-password
-        ;;
-      *)
-        echo ""
-        echo -e "\033[0;36mDefault password kept. You can change it anytime with: \033[1mchange-password\033[0m"
-        echo ""
-        ;;
-    esac
+  if [ ! -f /root/.password_changed ]; then
+    /usr/local/bin/change-password --first-login || exit 1
   fi
 fi
 BASHRC_EOF
