@@ -91,19 +91,47 @@ worker02:~$
 
 ## Configuration
 
-### Changing the ttyd Password
+### Changing Credentials & Password Management
 
-Edit `Dockerfile.custom-kind-ttyd` and modify this line:
-```dockerfile
-RUN echo "kind:$(openssl passwd -apr1 YOUR_NEW_PASSWORD)" > /etc/ttyd.passwd
+You have several ways to set or change credentials without needing to rebuild the image:
+
+#### Method 1: Automatic Prompt on First Login (Recommended)
+Upon your very first interactive login via the web terminal or SSH, an alert banner warns that default credentials (`kind` / `kind123`) are active:
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│ ⚠️  SECURITY ALERT: Default Password Active                     │
+│ Current credentials: username 'kind' | password 'kind123'       │
+│ It is strongly recommended to change your password now.         │
+└─────────────────────────────────────────────────────────────────┘
+
+Would you like to change your password now? [y/N]:
+```
+Press `y` to securely set a new password. The script updates both the web terminal and Linux root password, then automatically restarts the ttyd service.
+
+#### Method 2: Change Password Anytime via Terminal CLI
+Run the built-in utility inside the container at any time:
+```bash
+change-password
+```
+Or set it directly non-interactively:
+```bash
+change-password -p "MyNewSecretPassword"
 ```
 
-And update the ttyd systemd service:
-```dockerfile
-echo 'ExecStart=/usr/local/bin/ttyd -p 55555 -c kind:YOUR_NEW_PASSWORD -t fontSize=16 -W bash' >> /etc/systemd/system/ttyd.service
+#### Method 3: Change from Host via Docker CLI
+Change the password from your host machine without opening the web terminal:
+```bash
+docker exec kind-cluster-ttyd-control-plane change-password -p "MyNewSecretPassword"
 ```
 
-Then rebuild the image.
+#### Method 4: Build-time Arguments (If Building from Source)
+Override default credentials during `docker buildx` without editing the Dockerfile:
+```bash
+docker buildx build \
+  --build-arg DEFAULT_USER=admin \
+  --build-arg DEFAULT_PASSWORD=custompassword \
+  ...
+```
 
 ### Changing Discovery Interval
 

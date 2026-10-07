@@ -25,38 +25,119 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
     wget "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" -O /usr/local/bin/ttyd && \
     chmod +x /usr/local/bin/ttyd
 
-# Create a password file for ttyd authentication
-# Default password is "kind123" (you can change this)
-RUN echo "kind:$(openssl passwd -apr1 kind123)" > /etc/ttyd.passwd
+# Default credentials (can be overridden via build args if building from source)
+ARG DEFAULT_USER=kind
+ARG DEFAULT_PASSWORD=kind123
 
-# Create a startup script for ttyd
-RUN echo '#!/bin/bash' > /usr/local/bin/start-ttyd.sh && \
-    echo 'ttyd -p 55555 -c kind:kind123 -t fontSize=16 -t theme={"background":"#1e1e1e"} -W bash &' >> /usr/local/bin/start-ttyd.sh && \
-    chmod +x /usr/local/bin/start-ttyd.sh
-
-# Configure and enable SSH
-RUN mkdir -p /var/run/sshd && \
-    echo 'root:kind123' | chpasswd && \
+# Create credentials file and configure root password
+RUN mkdir -p /etc/default && \
+    echo "TTYD_USER=${DEFAULT_USER}" > /etc/default/ttyd && \
+    echo "TTYD_PASSWORD=${DEFAULT_PASSWORD}" >> /etc/default/ttyd && \
+    chmod 600 /etc/default/ttyd && \
+    mkdir -p /var/run/sshd && \
+    echo "root:${DEFAULT_PASSWORD}" | chpasswd && \
     sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config || true && \
     sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config || true && \
     grep -q "PermitRootLogin yes" /etc/ssh/sshd_config || echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
     grep -q "PasswordAuthentication yes" /etc/ssh/sshd_config || echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
     if [ -f /lib/systemd/system/ssh.service ]; then ln -s /lib/systemd/system/ssh.service /etc/systemd/system/multi-user.target.wants/ssh.service || true; fi
 
-# Create a systemd service to start ttyd after system boots
+# Create startup script for ttyd (reads dynamically from /etc/default/ttyd)
+RUN cat > /usr/local/bin/start-ttyd.sh <<'START_TTYD_EOF'
+#!/bin/bash
+[ -f /etc/default/ttyd ] && . /etc/default/ttyd
+TTYD_USER="${TTYD_USER:-kind}"
+TTYD_PASSWORD="${TTYD_PASSWORD:-kind123}"
+exec /usr/local/bin/ttyd -p 55555 -c "${TTYD_USER}:${TTYD_PASSWORD}" -t fontSize=16 -t theme='{"background":"#1e1e1e"}' -W bash
+START_TTYD_EOF
+RUN chmod +x /usr/local/bin/start-ttyd.sh
+
+# Create password utility to update ttyd & root passwords anytime
+RUN cat > /usr/local/bin/change-password <<'CHANGE_PASS_EOF'
+#!/bin/bash
+set -e
+
+CONFIG_FILE="/etc/default/ttyd"
+[ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+CURRENT_USER="${TTYD_USER:-kind}"
+NEW_PASS=""
+NEW_USER="$CURRENT_USER"
+
+while getopts "p:u:h" opt; do
+  case "$opt" in
+    p) NEW_PASS="$OPTARG" ;;
+    u) NEW_USER="$OPTARG" ;;
+    h)
+      echo "Usage: change-password [-p <password>] [-u <username>]"
+      exit 0
+      ;;
+    *)
+      echo "Usage: change-password [-p <password>] [-u <username>]"
+      exit 1
+      ;;
+  esac
+done
+
+if [ -z "$NEW_PASS" ]; then
+  echo ""
+  echo -e "\033[1;36m🔑 Update Password (ttyd web terminal & root)\033[0m"
+  echo "Username: $NEW_USER"
+  echo ""
+  while true; do
+    read -r -s -p "Enter new password: " p1
+    echo ""
+    if [ -z "$p1" ]; then
+      echo "Password cannot be empty. Please try again."
+      continue
+    fi
+    read -r -s -p "Confirm new password: " p2
+    echo ""
+    if [ "$p1" != "$p2" ]; then
+      echo "Passwords do not match. Please try again."
+    else
+      NEW_PASS="$p1"
+      break
+    fi
+  done
+fi
+
+cat > "$CONFIG_FILE" <<EOF
+TTYD_USER=$NEW_USER
+TTYD_PASSWORD=$NEW_PASS
+EOF
+chmod 600 "$CONFIG_FILE"
+
+echo "root:$NEW_PASS" | chpasswd
+touch /root/.password_changed
+
+echo ""
+echo -e "\033[1;32m✅ Password successfully updated for user '$NEW_USER' and system 'root'!\033[0m"
+
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ttyd 2>/dev/null; then
+  echo "🔄 Restarting ttyd web service..."
+  echo "⚠️  If connected via web terminal, please refresh your browser to re-login."
+  sleep 1
+  systemctl restart ttyd 2>/dev/null || true
+fi
+CHANGE_PASS_EOF
+RUN chmod +x /usr/local/bin/change-password
+
+# Create systemd service to start ttyd after system boots
 RUN mkdir -p /etc/systemd/system/ && \
-    echo '[Unit]' > /etc/systemd/system/ttyd.service && \
-    echo 'Description=ttyd - web terminal' >> /etc/systemd/system/ttyd.service && \
-    echo 'After=multi-user.target' >> /etc/systemd/system/ttyd.service && \
-    echo '' >> /etc/systemd/system/ttyd.service && \
-    echo '[Service]' >> /etc/systemd/system/ttyd.service && \
-    echo 'Type=simple' >> /etc/systemd/system/ttyd.service && \
-    echo 'ExecStart=/usr/local/bin/ttyd -p 55555 -c kind:kind123 -t fontSize=16 -W bash' >> /etc/systemd/system/ttyd.service && \
-    echo 'Restart=always' >> /etc/systemd/system/ttyd.service && \
-    echo '' >> /etc/systemd/system/ttyd.service && \
-    echo '[Install]' >> /etc/systemd/system/ttyd.service && \
-    echo 'WantedBy=multi-user.target' >> /etc/systemd/system/ttyd.service && \
-    ln -s /etc/systemd/system/ttyd.service /etc/systemd/system/multi-user.target.wants/ttyd.service
+    cat > /etc/systemd/system/ttyd.service <<'TTYD_SVC_EOF'
+[Unit]
+Description=ttyd - web terminal
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/start-ttyd.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+TTYD_SVC_EOF
+RUN ln -s /etc/systemd/system/ttyd.service /etc/systemd/system/multi-user.target.wants/ttyd.service
 
 # Set KUBECONFIG environment variable for kubectl access in ttyd terminal
 RUN echo 'export KUBECONFIG=/etc/kubernetes/admin.conf' >> /root/.bashrc
@@ -157,5 +238,40 @@ RUN echo '' >> /root/.bashrc && \
     echo '  fi' >> /root/.bashrc && \
     echo '  export PS1="\\[\\033[01;32m\\]${HOST_SHORT}\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ "' >> /root/.bashrc && \
     echo 'fi' >> /root/.bashrc
+
+# Prompt user to change password on first interactive login
+RUN cat >> /root/.bashrc <<'BASHRC_EOF'
+
+# First login password prompt
+if [[ $- == *i* ]]; then
+  if [ -f /etc/default/ttyd ]; then
+    _curr_pw=$(grep '^TTYD_PASSWORD=' /etc/default/ttyd 2>/dev/null | cut -d'=' -f2-)
+    if [ -n "$_curr_pw" ] && [ "$_curr_pw" != "kind123" ]; then
+      touch /root/.password_changed 2>/dev/null || true
+    fi
+  fi
+  if [ ! -f /root/.password_prompt_shown ] && [ ! -f /root/.password_changed ]; then
+    touch /root/.password_prompt_shown
+    echo ""
+    echo -e "\033[1;33m┌─────────────────────────────────────────────────────────────────┐\033[0m"
+    echo -e "\033[1;33m│\033[0m \033[1;31m⚠️  SECURITY ALERT: Default Password Active                     \033[1;33m│\033[0m"
+    echo -e "\033[1;33m│\033[0m Current credentials: username '\033[1;37mkind\033[0m' | password '\033[1;37mkind123\033[0m'        \033[1;33m│\033[0m"
+    echo -e "\033[1;33m│\033[0m It is strongly recommended to change your password now.         \033[1;33m│\033[0m"
+    echo -e "\033[1;33m└─────────────────────────────────────────────────────────────────┘\033[0m"
+    echo ""
+    read -r -p "Would you like to change your password now? [y/N]: " _change_choice
+    case "$_change_choice" in
+      [yY]|[yY][eE][sS])
+        /usr/local/bin/change-password
+        ;;
+      *)
+        echo ""
+        echo -e "\033[0;36mDefault password kept. You can change it anytime with: \033[1mchange-password\033[0m"
+        echo ""
+        ;;
+    esac
+  fi
+fi
+BASHRC_EOF
 
 WORKDIR /root
