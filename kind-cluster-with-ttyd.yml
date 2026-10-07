@@ -4,7 +4,7 @@ name: kind-cluster-ttyd
 
 nodes:
   - role: control-plane
-    image: shantanupatil01/custom-kind-ttyd:1.35.0
+    image: shantanupatil01/custom-kind-ttyd:1.37.0
     kubeadmConfigPatches:
     - |
       kind: InitConfiguration
@@ -61,7 +61,7 @@ nodes:
         protocol: tcp
 
   - role: worker
-    image: shantanupatil01/custom-kind-ttyd:1.35.0
+    image: shantanupatil01/custom-kind-ttyd:1.37.0
     kubeadmConfigPatches:
     - |
       kind: JoinConfiguration
@@ -93,7 +93,7 @@ nodes:
         protocol: tcp
 
   - role: worker
-    image: shantanupatil01/custom-kind-ttyd:1.35.0
+    image: shantanupatil01/custom-kind-ttyd:1.37.0
     kubeadmConfigPatches:
     - |
       kind: JoinConfiguration

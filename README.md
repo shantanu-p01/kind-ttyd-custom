@@ -32,7 +32,7 @@ This directory contains files to create a custom KinD (Kubernetes in Docker) clu
    kind create cluster --config kind-cluster-with-ttyd.yml
    ```
    
-   Note: The config automatically pulls `shantanupatil01/custom-kind-ttyd:1.35.0` from your local build
+   Note: The config automatically pulls `shantanupatil01/custom-kind-ttyd:1.37.0` from your local build
 
 2. **Access control-plane via ttyd:**
    - Open browser: http://localhost:55555
@@ -51,7 +51,7 @@ This directory contains files to create a custom KinD (Kubernetes in Docker) clu
 
 1. **Build the custom image locally:**
    ```bash
-   docker buildx build --platform linux/amd64 -t shantanupatil01/custom-kind-ttyd:1.35.0 -f Dockerfile.custom-kind-ttyd --load .
+   docker buildx build --platform linux/amd64 -t shantanupatil01/custom-kind-ttyd:1.37.0 -f Dockerfile.custom-kind-ttyd --load .
    ```
 
 2. **Create the KinD cluster:**
@@ -120,7 +120,7 @@ echo 'ExecStart=/bin/bash -c "while true; do /usr/local/bin/kind-node-discovery.
 Edit `kind-cluster-with-ttyd.yml` and add more worker nodes:
 ```yaml
   - role: worker
-    image: shantanupatil01/custom-kind-ttyd:1.35.0
+    image: shantanupatil01/custom-kind-ttyd:1.37.0
     extraPortMappings:
       - containerPort: 30031
         hostPort: 30031
@@ -207,7 +207,7 @@ docker exec kind-cluster-ttyd-control-plane systemctl restart kind-node-discover
 
 This should be fixed in the latest image. If you see this error, rebuild:
 ```bash
-docker buildx build --platform linux/amd64 -t shantanupatil01/custom-kind-ttyd:1.35.0 -f Dockerfile.custom-kind-ttyd --load .
+docker buildx build --platform linux/amd64 -t shantanupatil01/custom-kind-ttyd:1.37.0 -f Dockerfile.custom-kind-ttyd --load .
 kind delete cluster --name kind-cluster-ttyd
 kind create cluster --config kind-cluster-with-ttyd.yml
 ```
